@@ -1,0 +1,53 @@
+#!/bin/bash
+
+ua="Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0"
+ualist=useragentlist.txt
+db=myArtGallery
+baseurl=http://www.artfacts.net/en/artists/top100.html
+DBDUMP=/home/syn/db-backups/artists_cache.json
+APPBIN=/home/syn/app/bin
+TMPFILE=/tmp/artfacts.$$
+if test -f "$ualist"; then
+    tot=`awk 'BEG{cnt=0}{cnt=cnt+1}END{print cnt}' "$ualist"`
+    rand=$RANDOM   #REQUIRES bash / sh-uncompliant!
+    if test $rand -lt $tot; then
+	row=`expr $tot % $rand`
+    else
+	row=`expr $rand % $tot`
+    fi
+    ua=`awk "BEG{cnt=0}{cnt=cnt+1;if (cnt == $row){print; exit;}}" "$ualist"`
+fi
+wget="`which wget` -q -U '$ua'"
+
+$wget $baseurl -O $TMPFILE
+
+rank=0
+grep 'a href="/en/artist/[^/]*/profile.html"' $TMPFILE | \
+    iconv -t utf-8 -f cp1252 | \
+    while read line
+    do
+	rank=`expr $rank + 1`
+	eval `echo "$line" | sed 's|.*a href=[^>]*>[ \t]*\([^<]*\)[ \t]*</a>.*|displayname="\1"|'`
+	dname=`echo "$displayname" | sed -e 's| |-|g' -e 's|\.||g' -e 's|\t| |g' -e 's|æ|ae|g' -e 'y/āáǎàçēéěèëīíǐìōóǒòöūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛÜ/aaaaceeeeeiiiiooooouuuuuuuuuAAAAEEEEIIIIOOOOUUUUUUUUU/' | tr [A-Z] [a-z]`
+	if grep "\"dname\" : \"$dname\"" $DBDUMP >/dev/null; then
+	    ids=`grep "\"dname\" : \"$dname\"" $DBDUMP | sed 's|.* "id" : \([1-9][0-9]*\)[^0-9].*|\1|'`
+	    for id in $ids
+	    do
+		echo "fetching extended artist info about $id $dname"
+		$APPBIN/extended_artist_info $id "$dname"
+		echo "inserting artfacts data regarding $id $dname"
+#		mongo $db <<EOF
+		cat <<EOF
+lookup = { dname: "$dname" }
+record = { \$set: { rank: $rank } }
+options = { upsert: false, multi: true }
+db.artists.update(lookup, record, options)
+EOF
+	    done
+	else
+	    echo "unmatched $dname"
+	fi
+    done
+
+rm -f $TMPFILE
+exit 0

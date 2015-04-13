@@ -1,0 +1,28 @@
+#!/bin/sh
+
+TMPFILE=/tmp/citylist.$$
+OUT=/var/www/js/list.js
+
+grep '"city".*"country"' batch | \
+    sed 's|.*city" : "\([^"]*\)", "country" : "\([^"]*\).*|country="\2" city="\1"|' | \
+    sort -u >$TMPFILE
+prev=
+echo "var citylist = {" >$OUT
+while read line
+do
+    eval `echo $line`
+    if ! test "$prev" = "$country"; then
+	test "$prev" && echo "	],"
+	echo "	'$country': ["
+	prev="$country"
+    fi
+    echo "	    '$city',"
+done <$TMPFILE >>$OUT
+cat >>$OUT <<EOF
+	]
+    };
+EOF
+
+rm -f $TMPFILE
+
+exit 0

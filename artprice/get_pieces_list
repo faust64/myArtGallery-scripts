@@ -1,0 +1,59 @@
+#!/bin/bash
+
+ua="Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0"
+ualist=useragentlist.txt
+basedir="http://fr.artprice.com/"
+artistsdir="${basedir}artiste/"
+lotsdir="/lots/passes?ipp=100"
+tmpfile=/tmp/aspirateur.$$
+idx=artists
+list=pieces/
+
+cat $idx | sed 's|\([0-9]*\),\(.*\)|\1 \2|' | while read artistid artistdn
+    do
+	artistdir="${artistsdir}$artistid/$artistdn$lotsdir"
+	artistsubdir=`expr $artistid : '\(.\).*'`
+	pagenum=1
+	test -s $list$artistsubdir/$artistid && rm -f $list$artistsubdir/$artistid
+	while :
+	do
+	    stepdir="$artistdir&p=$pagenum&sort=datesale_desc"
+	    echo -n "fetching [$artistid:$artistdn/$pagenum] "
+	    pagenum=`expr $pagenum + 1`
+	    if test -f "$ualist"; then
+		tot=`awk 'BEG{cnt=0}{cnt=cnt+1}END{print cnt}' "$ualist"`
+		rand=$RANDOM   #REQUIRES bash / sh-uncompliant!
+		if test $rand -lt $tot; then
+		    row=`expr $tot % $rand`
+		else
+		    row=`expr $rand % $tot`
+		fi
+		ua=`awk "BEG{cnt=0}{cnt=cnt+1;if (cnt == $row){print; exit;}}" "$ualist"`
+	    fi
+	    wget="`which wget` -q -U '$ua'"
+	    $wget "$stepdir" -O $tmpfile
+	    if test -s $tmpfile; then
+		if ! grep 'lot_detail_' $tmpfile >/dev/null; then
+		    echo "Does not exist, skipping"
+		    break
+		else
+		    echo OK
+		fi
+	    else
+		echo "KO, skipping"
+		continue
+	    fi
+	    test -d $list$artistsubdir || mkdir -p $list$artistsubdir
+	    grep 'class="lot_detail_[0-9]*" href=' $tmpfile \
+		| sed -e 's|>.*||g' \
+		      -e 's|.*/lot/passes/\([0-9]*\)/\(.*\).p=[0-9].*|\1 \2|g' \
+		| sort -u | while read id ref
+		do
+		    echo "$id,$ref"
+		done >>$list$artistsubdir/$artistid
+	done
+    done
+
+rm -f $tmpfile
+
+exit 0

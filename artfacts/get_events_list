@@ -1,0 +1,145 @@
+#!/bin/bash
+
+ua="Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0"
+ualist=useragentlist.txt
+db=myArtGallery
+wget="`which wget` -q -U '$ua'"
+baseurl=http://www.artfacts.net/
+indexurl=${baseurl}en/exhibitions/index.html
+cityurl=${baseurl}index.php/pageType/exhibitions/city/
+countryurl=/country/
+TMPFILE=/tmp/artfacts.$$
+WRK=/tmp/work.$$
+EVT=/tmp/event.$$
+
+mywget() {
+    if test -f "$ualist"; then
+	tot=`awk 'BEG{cnt=0}{cnt=cnt+1}END{print cnt}' "$ualist"`
+	rand=$RANDOM   #REQUIRES bash / sh-uncompliant!
+	if test $rand -lt $tot; then
+	    row=`expr $tot % $rand`
+	else
+	    row=`expr $rand % $tot`
+	fi
+	ua=`awk "BEG{cnt=0}{cnt=cnt+1;if (cnt == $row){print; exit;}}" "$ualist"`
+    fi
+    wget="`which wget` -q -U '$ua'"
+    $wget $@
+}
+
+mywget $indexurl -O $TMPFILE
+
+grep -E '/exhibitions/city/' $TMPFILE | \
+    iconv -t utf-8 -f latin1 | \
+    sed -e 's|.*/exhibitions/city/\([1-9][0-9]*\)/country/\([1-9][0-9]*\)/.*|city=\1 country=\2|' >$WRK
+while read line
+do
+    eval `echo $line`
+    index=$cityurl$city$countryurl$country/lang/1
+    mywget $index -O $TMPFILE
+    eval `grep 'meta name="description" ' $TMPFILE | iconv -t utf-8 -f latin1 | sed -e 's|.*Exhibitions - ||g' -e 's|^\(.*\) - \(.*\)".*|countryname="\1" cityname="\2"|'`
+    grep 'a href="/en/exhibition/' $TMPFILE | \
+	iconv -t utf-8 -f latin1 | \
+	sed 's|.*<a href="\([^"]*\)".*|\1|' | \
+	while read evturl
+	do
+	    mywget $baseurl$evturl -O $EVT
+	    title=
+	    if iconv -t utf-8 -f cp1252 $EVT | grep 'meta name="keywords" .*content="Overview - ' >/dev/null; then
+		if iconv -t utf-8 -f cp1252 $EVT | grep 'Overview - \(.*\) - \(.*\) - \(.*\)"[ \t]*>' >/dev/null; then
+		    eval `iconv -t utf-8 -f cp1252 $EVT | grep 'meta name="keywords" ' | sed 's|.*Overview - \(.*\) - \(.*\) - \(.*\)"[ \t]*>.*$|title="\1" where1="\2" where2="\3"|'`
+		elif iconv -t utf-8 -f cp1252 $EVT | grep 'Overview - \(.*\) - \(.*\)"[ \t]*>' >/dev/null; then
+		    eval `iconv -t utf-8 -f cp1252 $EVT | grep 'meta name="keywords" ' | sed 's|.*Overview - \(.*\) - \(.*\)"[ \t]*>.*$|title="\1" where1="\2" where2=|'`
+		fi
+	    elif iconv -t utf-8 -f cp1252 $EVT | grep 'meta name="keywords".*content=".* - Overview"' >/dev/null; then
+		if iconv -t utf-8 -f cp1252 $EVT | grep 'content="[^"]*,' >/dev/null; then
+		    eval `iconv -t utf-8 -f cp1252 $EVT | grep 'meta name="keywords" ' | sed 's|.*content="\(.*\), \(.*\) - Overview"[ \t]*>.*$|title="\1" where1="\2" where2=|'`
+		else
+		    cat >>/tmp/casuffacommeci <<EOF
+UNHANDLED ---- wget $baseurl$evturl -O $EVT ----
+EOF
+		    echo unhandled >&2
+		    grep 'meta name="keywords"' $EVT
+		    continue
+		fi
+	    else
+		cat >>/tmp/casuffacommeci <<EOF
+UNHANDLED ---- wget $baseurl$evturl -O $EVT ----
+EOF
+		echo unhandled >&2
+		grep 'meta name="keywords"' $EVT
+		continue
+	    fi
+	    if test "$title"; then
+		if echo "$title" | grep '[Gg]roup [Ss]how:' >/dev/null; then
+		    title=`echo "$title" | sed -e 's|[ \t]*[Gg]roup [Ss]how:[ \t]*||' -e 's|"||g'`
+		    group=true
+		elif echo "$title" | grep '[Ss]olo [Ss]how:' >/dev/null; then
+		    title=`echo "$title" | sed -e 's|[ \t]*[Ss]olo [Ss]how:[ \t]*||' -e 's|"||g'`
+		    group=false
+		else
+		    title=`echo "$title" | sed 's|"||g'`
+		    group=undefined
+		fi
+		where1=`echo "$where1" | sed 's|"||g'`
+		where2=`echo "$where2" | sed 's|"||g'`
+		direction=`iconv -t utf-8 -f cp1252 $EVT | grep maps.google.com | head -1 | sed -e 's|.*maps.google.com/\([^"]*\)".*|\1|'`
+		tel=`iconv -t utf-8 -f cp1252 $EVT | grep '<SPAN CLASS="caption">tel</SPAN>' | sed -e 's|.*</SPAN>[&nbsp;]*||'`
+		if echo "$tel" | grep "</TD>"; then
+		    tel=`grep '<TD NOWRAP>' $EVT | iconv -t utf-8 -f cp1252 | head -1 | sed 's|.*NOWRAP>\([^<]*\)<.*|\1|'`
+		fi
+		tel=`echo "$tel" | sed -e 's|[ \.-]||g' -e 's|ext[\.]*| ext:|'`
+
+		site=`iconv -t utf-8 -f cp1252 $EVT | grep '<td CLASS="grey2">' | sed 's|.*<td CLASS="grey2">\([^<]*\)</td>.*|\1|'`
+		eval `iconv -t utf-8 -f cp1252 $EVT | grep "<span class='grey2'>" | sed -e "s|.*<span class='grey2'>||" -e 's|"||g' -e 's|^\(.*\) until \(.*\)</span>.*|start="\1" stop="\2"|'`
+		dstart=`date -d -f +%s --date="$start"`
+		dstop=`date -d -f +%s --date="$stop"`
+		dname=`echo "$title" | sed -e 's|[\t ()/]|-|g' -e 's/|/-/g' -e 's|[\.:&µ#";\?\+\!]||g' -e 's|æ|ae|g' -e 'y/āáǎàçēéěèëīíǐìōóǒòöūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛÜ/aaaaceeeeeiiiiooooouuuuuuuuuAAAAEEEEIIIIOOOOUUUUUUUUU/' | tr [A-Z] [a-z] | sed 's|-[-]*|-|g'`
+		gallery="$where1, $where2"
+		object="dname: \"$dname\", title: \"$title\", expo: true"
+		object="$object, city: \"$cityname\", country: \"$countryname\""
+		if ! test "$group" = undefined; then
+		    object="$object, group: $group"
+		fi
+		if test "$where1" -a "$where2"; then
+		    object="$object, direction: \"$gallery\""
+		elif test "$where1"; then
+		    object="$object, direction: \"$where1\""
+		elif test "$where2"; then
+		    object="$object, direction: \"$where2\""
+		fi
+		if test "$direction"; then
+		    object="$object, maps: \"$direction\""
+		fi
+		if test "$tel"; then
+		    object="$object, tel: \"$tel\""
+		fi
+		if test "$site"; then
+		    object="$object, url: \"$site\""
+		fi
+		if test "$dstart"; then
+		    test "$dstart" -gt 0 && object="$object, starts: $dstart"
+		fi
+		if test "$dstop"; then
+		    test "$dstop" -gt 0 && object="$object, stops: $dstop"
+		fi
+		cat >>/tmp/casuffacommeci <<EOF
+ ---- wget $baseurl$evturl -O $EVT ----
+lookup = { dname: "$dname", city: "$cityname", country: "$countryname" }
+record = { $object }
+options = { upsert: true, multi: false }
+db.events.update(lookup, record, options)
+EOF
+		mongo $db <<EOF
+lookup = { dname: "$dname", city: "$cityname", country: "$countryname" }
+record = { $object }
+options = { upsert: true, multi: false }
+db.events.update(lookup, record, options)
+EOF
+	    fi
+	done
+done <$WRK
+
+rm -f $TMPFILE $WRK $EVT
+
+exit 0

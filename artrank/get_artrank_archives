@@ -1,0 +1,60 @@
+#!/bin/bash
+
+ua="Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0"
+ualist=useragentlist.txt
+baseurl=http://artrank.com/blogs/archive
+TMPFILE=/tmp/artrank.$$
+DBDUMP=/home/syn/db-backups/artists_cache.json
+APPBIN=/home/syn/app/bin
+WRK=/tmp/work.$$
+db=myArtGallery
+if test -f "$ualist"; then
+    tot=`awk 'BEG{cnt=0}{cnt=cnt+1}END{print cnt}' "$ualist"`
+    rand=$RANDOM   #REQUIRES bash / sh-uncompliant!
+    if test $rand -lt $tot; then
+	row=`expr $tot % $rand`
+    else
+	row=`expr $rand % $tot`
+    fi
+    ua=`awk "BEG{cnt=0}{cnt=cnt+1;if (cnt == $row){print; exit;}}" "$ualist"`
+fi
+wget="`which wget` -q -U '$ua'"
+
+$wget $baseurl -O $TMPFILE
+grep '<td>[1-9][0-9]*\.[ \t].*' $TMPFILE | \
+    sed -e 's|.*<td>\([1-9][0-9]*\)\.[ \t]\([^<]*\)</td>.*|\1	\2|' \
+	-e 's|<[/]*span>||g' \
+	-e 's| |-|g' \
+	-e 's|\.||g' \
+	-e 's|\t| |g' \
+	-e 's|æ|ae|g' \
+	-e 'y/āáǎàçēéěèëīíǐìōóǒòöūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛÜ/aaaaceeeeeiiiiooooouuuuuuuuuAAAAEEEEIIIIOOOOUUUUUUUUU/' | \
+    tr [A-Z] [a-z] | \
+    tr -d $'\r' >$WRK
+./extract_relevant_data $WRK >$TMPFILE
+while read line
+do
+    match=`echo "$line" | sed 's|^dname: "\([^"]*\).*|\1|'`
+    line=`echo "$line" | sed 's|dname: "[^"]*", ||'`
+    if grep "\"dname\" : \"$match\"" $DBDUMP >/dev/null; then
+	ids=`grep "\"dname\" : \"$match\"" $DBDUMP | sed 's|.* "id" : \([1-9][0-9]*\)[^0-9].*|\1|'`
+	for id in $ids
+	do
+	    echo "fetching extended artist info about $id $match"
+	    $APPBIN/extended_artist_info $id "$match"
+	    echo "inserting artrank data regarding $id $match"
+	    mongo $db <<EOF
+lookup = { dname: "$match" }
+record = { \$set: { $line } }
+options = { upsert: false, multi: false }
+db.artists.update(lookup, record, options)
+EOF
+	done
+    else
+	echo "unmatched $match"
+    fi
+done <$TMPFILE
+
+rm -f $WRK $TMPFILE
+
+exit 0

@@ -1,0 +1,12 @@
+#!/bin/sh
+
+db=myArtGallery
+collections="artists artists_cache artworks artworks_cache events"
+
+for col in $collections
+do
+    test -f $col.json && mv $col.json former.$col.json
+    mongoexport --db $db --collection $col >$col.json
+done
+
+exit 0

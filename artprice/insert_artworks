@@ -1,0 +1,55 @@
+#!/bin/sh
+
+db=myArtGallery
+idx=artists
+root=pieces
+step=20
+tmp=/tmp/insert.$$
+
+commit_db()
+{
+    local fl
+
+    fl=$1
+    mongo $db >/dev/null 2>&1 <<EOF
+i = [`cat $fl`];
+db.events_cache.insert(i);
+EOF
+    if test $? -ne 0; then
+	echo warn >&2
+    fi
+}
+
+for file in `find $root -type f | sort`
+do
+    cpt=0
+    max=`awk 'END{print NR}' $file`
+    authorid=`echo "$file" | awk -F/ '{print $3}'`
+    authordname=`awk -F, "/^$authorid,/{print \$2}" $idx`
+
+    while test $cpt -lt $max
+    do
+	next=`expr $cpt + $step`
+	echo -n "processing [$cpt-$next/$max] "
+	if test $next -le $max; then
+	    rstep=$step
+	else
+	    rstep=`expr $max - $cpt`
+	fi
+	head -$next $file | tail -$rstep \
+	    | sed 's|^\([0-9]*\),\(.*\)|\1 \2|' \
+	    | while read id dname
+	    do
+		echo -n "{id: $id, authorid: $author, dname: \"$dname\", authordname: \"$authordname\"},"
+	    done >$tmp
+	    sed -i 's|,$||' $tmp
+	    echo -n "commiting ... "
+	    commit_db $tmp
+	    echo OK
+	    cpt=`expr $cpt + $step`
+	done
+done
+
+rm -f $tmp
+
+exit 0

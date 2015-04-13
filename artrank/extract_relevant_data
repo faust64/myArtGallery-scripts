@@ -1,0 +1,56 @@
+#!/usr/bin/awk -f
+
+BEGIN {
+    col = 0
+    row = 1
+    depth = 0
+    date = strftime("%s")
+}
+{
+    buy = "false"
+    range = "false"
+    sell = "false"
+    liquidate = "false"
+    if ($1 == row) {
+	col++
+    } else {
+	col = 0
+	row++
+	if (row == 11) {
+	    row = 1
+	    depth++
+	}
+    }
+    if (col == 0) {
+	range = "10000"
+    } else if (col == 1) {
+	range = "30000"
+    } else if (col == 2) {
+	range = "100000"
+    } else if (col == 3) {
+	buy = "true"
+    } else if (col == 4) {
+	sell = "true"
+    } else if (col == 5) {
+	liquidate = "true"
+    }
+#   printf "depth:%d,col:%d,row:%d  ", depth, col, row
+    printf "dname: \"%s\"", $2
+    if (range != "false") {
+	printf ", range: '%s'", range
+    }
+    if (buy == "true") {
+	printf ", buy: true"
+    }
+    if (sell == "true") {
+	printf ", sell: true"
+    }
+    if (liquidate == "true") {
+	printf ", liquidate: true"
+    }
+    pertinence = depth * 20
+    rank = 50 + row
+    printf ", pertinence: %d", pertinence
+    printf ", fetched: %d, ttl: 2592000, rank: %d", date, rank
+    printf "\n"
+}
